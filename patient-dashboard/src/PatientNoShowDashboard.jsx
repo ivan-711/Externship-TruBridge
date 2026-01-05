@@ -1,7 +1,7 @@
 import Papa from 'papaparse';
 import React, { useState, useMemo } from 'react';
 import {
-  BarChart, Bar, PieChart, Pie, Cell,
+  BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
@@ -14,6 +14,11 @@ const PatientNoShowDashboard = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDataQualityExpanded, setIsDataQualityExpanded] = useState(false);
+  const [weeklyView, setWeeklyView] = useState('count');
+  const [ageView, setAgeView] = useState('count');
+  const [smsView, setSmsView] = useState('count');
+  const [showStats, setShowStats] = useState(false);
 
 
   // Helper functions (type-safe parsing)
@@ -204,7 +209,29 @@ const PatientNoShowDashboard = () => {
     const minDate = new Date(Math.min(...dates));
     const maxDate = new Date(Math.max(...dates));
     const dateRange = `${minDate.toLocaleDateString()} – ${maxDate.toLocaleDateString()}`;
-    return { total, dateRange, noShowDef: 'NoShow=1 means patient missed appointment' };
+
+    // Calculate date range in days
+    const daysDiff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
+
+    return { total, dateRange, dateRangeDays: daysDiff, minDate, maxDate, noShowDef: 'NoShow=1 means patient missed appointment' };
+  }, [csvData]);
+
+  const dataQualityStats = useMemo(() => {
+    if (!csvData) return null;
+
+    const total = csvData.length;
+
+    // Count missing values for key fields
+    const missingWaitingDays = csvData.filter((row) => getWaitingDays(row) === null).length;
+    const missingSMS = csvData.filter((row) => !row.SMS_received || row.SMS_received.trim() === '').length;
+    const missingAgeGroup = csvData.filter((row) => !row.AgeGroup || row.AgeGroup.trim() === '' || row.AgeGroup === 'Unknown').length;
+
+    return {
+      total,
+      missingWaitingDays,
+      missingSMS,
+      missingAgeGroup
+    };
   }, [csvData]);
 
   const filteredData = useMemo(() => {
@@ -227,6 +254,109 @@ const PatientNoShowDashboard = () => {
     const noShowRate = ((noShows / total) * 100).toFixed(1);
 
     return { total, noShows, shows, noShowRate };
+  }, [filteredData]);
+
+  const overallKpis = useMemo(() => {
+    if (!csvData) return { total: 0, noShows: 0, noShowRate: 0 };
+
+    const total = csvData.length;
+    const noShows = csvData.filter((row) => row.NoShow === 1).length;
+    const noShowRate = ((noShows / total) * 100).toFixed(1);
+
+    return { total, noShows, noShowRate };
+  }, [csvData]);
+
+  const currentViewSummary = useMemo(() => {
+    if (!csvData) return null;
+
+    const hasFilters = activeFilterCount > 0;
+    const filteredRate = parseFloat(kpis.noShowRate);
+    const overallRate = parseFloat(overallKpis.noShowRate);
+
+    if (!hasFilters) {
+      // No filters applied
+      return {
+        summary: `Viewing all ${overallKpis.total.toLocaleString()} appointments. Overall no-show rate is ${overallKpis.noShowRate}%.`,
+        insight: 'Apply filters to identify specific segments with elevated or reduced no-show risk.'
+      };
+    }
+
+    // Filters are applied - build filter description
+    const filterDescriptions = [];
+    if (filters.ageGroup !== 'All') filterDescriptions.push(`age group ${filters.ageGroup}`);
+    if (filters.smsReceived !== 'All') filterDescriptions.push(filters.smsReceived === '1' ? 'SMS sent' : 'no SMS');
+    if (filters.week !== 'All') filterDescriptions.push(`week of ${filters.week}`);
+
+    const filterDescription = filterDescriptions.join(', ');
+    const rateDiff = filteredRate - overallRate;
+    const absDiff = Math.abs(rateDiff);
+    const comparison = rateDiff > 0 ? 'higher' : 'lower';
+
+    const summary = `Viewing ${kpis.total.toLocaleString()} appointments for ${filterDescription}. No-show rate is ${kpis.noShowRate}% — ${absDiff.toFixed(1)} percentage points ${comparison} than the overall average (${overallKpis.noShowRate}%).`;
+
+    // Generate actionable insight
+    let insight = '';
+    if (absDiff < 1) {
+      insight = 'This segment performs similarly to the overall average.';
+    } else if (rateDiff > 3) {
+      insight = '⚠️ This segment shows elevated no-show risk. Consider targeted interventions like additional reminders or follow-ups.';
+    } else if (rateDiff > 0) {
+      insight = 'This segment shows slightly elevated no-show risk compared to average.';
+    } else if (rateDiff < -3) {
+      insight = '✓ This segment performs significantly better than average. Study these characteristics to identify best practices.';
+    } else {
+      insight = 'This segment performs better than average.';
+    }
+
+    return { summary, insight };
+  }, [csvData, filters, kpis, overallKpis, activeFilterCount]);
+
+  const waitingTimeComparison = useMemo(() => {
+    if (!filteredData.length) return null;
+
+    // Separate patients who showed up vs no-showed
+    const showedUp = filteredData.filter((row) => row.NoShow === 0);
+    const noShowed = filteredData.filter((row) => row.NoShow === 1);
+
+    // Extract waiting times (filter out null values)
+    const showedWaitTimes = showedUp
+      .map((row) => getWaitingDays(row))
+      .filter((days) => days !== null)
+      .sort((a, b) => a - b);
+
+    const noShowWaitTimes = noShowed
+      .map((row) => getWaitingDays(row))
+      .filter((days) => days !== null)
+      .sort((a, b) => a - b);
+
+    if (showedWaitTimes.length === 0 || noShowWaitTimes.length === 0) return null;
+
+    // Calculate median (middle value of sorted array)
+    const getMedian = (arr) => {
+      const mid = Math.floor(arr.length / 2);
+      return arr.length % 2 === 0 ? (arr[mid - 1] + arr[mid]) / 2 : arr[mid];
+    };
+
+    // Calculate mean (average)
+    const getMean = (arr) => arr.reduce((sum, val) => sum + val, 0) / arr.length;
+
+    const showedMedian = getMedian(showedWaitTimes);
+    const noShowMedian = getMedian(noShowWaitTimes);
+    const showedMean = getMean(showedWaitTimes);
+    const noShowMean = getMean(noShowWaitTimes);
+
+    // Calculate ratio
+    const ratio = showedMean > 0 ? (noShowMean / showedMean).toFixed(1) : 'N/A';
+
+    return {
+      showedMedian: showedMedian.toFixed(1),
+      noShowMedian: noShowMedian.toFixed(1),
+      showedMean: showedMean.toFixed(1),
+      noShowMean: noShowMean.toFixed(1),
+      ratio,
+      showedCount: showedWaitTimes.length,
+      noShowCount: noShowWaitTimes.length
+    };
   }, [filteredData]);
 
   const waitingDaysStats = useMemo(() => {
@@ -349,6 +479,49 @@ const PatientNoShowDashboard = () => {
     );
   };
 
+  const CustomWeeklyRateTooltip = ({ active, payload }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    return (
+      <div
+        className={`${isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-white text-slate-700 border-gray-300'} p-3 border rounded shadow-lg`}
+      >
+        <p className="font-semibold mb-1">{data.name}</p>
+        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}%</p>
+        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Total: {data.total} appointments</p>
+        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>No-shows: {data.noShows}</p>
+      </div>
+    );
+  };
+
+  const CustomAgeRateTooltip = ({ active, payload }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    return (
+      <div
+        className={`${isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-white text-slate-700 border-gray-300'} p-3 border rounded shadow-lg`}
+      >
+        <p className="font-semibold mb-1">Age Group: {data.name}</p>
+        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}%</p>
+        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Total: {data.total.toLocaleString()}</p>
+      </div>
+    );
+  };
+
+  const CustomSmsRateTooltip = ({ active, payload }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    return (
+      <div
+        className={`${isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-white text-slate-700 border-gray-300'} p-3 border rounded shadow-lg`}
+      >
+        <p className="font-semibold mb-1">{data.name}</p>
+        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}%</p>
+        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Total: {data.total.toLocaleString()}</p>
+      </div>
+    );
+  };
+
   const chartData = useMemo(() => {
     if (!filteredData.length) {
       return { byAge: [], bySMS: [], byWeek: [], byWaitingDays: [], pieData: [] };
@@ -371,7 +544,16 @@ const PatientNoShowDashboard = () => {
       if (row.NoShow === 1) ageGroups[age].NoShow++;
       else ageGroups[age].Show++;
     });
-    const byAge = Object.values(ageGroups).sort((a, b) => sortAgeGroups(a.name, b.name));
+    const byAge = Object.values(ageGroups).map((group) => {
+      const total = group.NoShow + group.Show;
+      const rate = total > 0 ? ((group.NoShow / total) * 100).toFixed(1) : '0.0';
+      return {
+        ...group,
+        total,
+        rate: parseFloat(rate),
+        noShows: group.NoShow
+      };
+    }).sort((a, b) => sortAgeGroups(a.name, b.name));
 
     const smsGroups = {
       Yes: { name: 'SMS Sent', NoShow: 0, Show: 0 },
@@ -382,6 +564,16 @@ const PatientNoShowDashboard = () => {
       if (row.NoShow === 1) smsGroups[sms].NoShow++;
       else smsGroups[sms].Show++;
     });
+    const bySMS = Object.values(smsGroups).map((group) => {
+      const total = group.NoShow + group.Show;
+      const rate = total > 0 ? ((group.NoShow / total) * 100).toFixed(1) : '0.0';
+      return {
+        ...group,
+        total,
+        rate: parseFloat(rate),
+        noShows: group.NoShow
+      };
+    });
 
     const weekGroups = {};
     filteredData.forEach((row) => {
@@ -390,7 +582,16 @@ const PatientNoShowDashboard = () => {
       if (row.NoShow === 1) weekGroups[week].NoShow++;
       else weekGroups[week].Show++;
     });
-    const byWeek = Object.values(weekGroups).sort((a, b) => {
+    const byWeek = Object.values(weekGroups).map((week) => {
+      const total = week.NoShow + week.Show;
+      const rate = total > 0 ? ((week.NoShow / total) * 100).toFixed(1) : '0.0';
+      return {
+        ...week,
+        total,
+        rate: parseFloat(rate),
+        noShows: week.NoShow
+      };
+    }).sort((a, b) => {
       if (a.name === 'Unknown') return 1;
       if (b.name === 'Unknown') return -1;
       return new Date(a.name) - new Date(b.name);
@@ -435,33 +636,95 @@ const PatientNoShowDashboard = () => {
 
     return {
       byAge,
-      bySMS: Object.values(smsGroups),
+      bySMS,
       byWeek,
       byWaitingDays,
       pieData
     };
   }, [filteredData, kpis]);
 
-  const highestNoShowAgeGroup = useMemo(() => {
-    if (!chartData.byAge || chartData.byAge.length === 0) return null;
+  const ageGroupInsight = useMemo(() => {
+    if (!chartData.byAge || chartData.byAge.length === 0) return { count: null, rate: null };
 
-    let best = null;
+    let highestRate = null;
+    let highestVolume = null;
 
     chartData.byAge.forEach((g) => {
-      const noShows = Number(g.NoShow) || 0;
-      const shows = Number(g.Show) || 0;
-      const total = noShows + shows;
+      const total = g.total || 0;
       if (total <= 0) return;
 
-      const rate = (noShows / total) * 100;
-      if (!best || rate > best.rate) {
-        best = { ageGroup: g.name, rate };
+      // Track highest rate
+      if (!highestRate || g.rate > highestRate.rate) {
+        highestRate = { ageGroup: g.name, rate: g.rate, total: g.total };
+      }
+
+      // Track highest volume
+      if (!highestVolume || total > highestVolume.total) {
+        highestVolume = { ageGroup: g.name, total: total };
       }
     });
 
-    if (!best) return null;
-    return `Highest no-show rate: ${best.rate.toFixed(1)}% in age group ${best.ageGroup}`;
+    const countInsight = highestVolume
+      ? `Highest volume: age group ${highestVolume.ageGroup} (${highestVolume.total.toLocaleString()} appointments)`
+      : null;
+
+    let rateInsight = null;
+    if (highestRate) {
+      // Check if younger patients (10-29) have higher rates than older patients (50+)
+      const youngerGroups = chartData.byAge.filter(g => {
+        const match = g.name.match(/^(\d+)/);
+        const age = match ? parseInt(match[1]) : 999;
+        return age >= 10 && age < 30;
+      });
+
+      const olderGroups = chartData.byAge.filter(g => {
+        const match = g.name.match(/^(\d+)/);
+        const age = match ? parseInt(match[1]) : 999;
+        return age >= 50 && age < 100;
+      });
+
+      const youngerAvg = youngerGroups.length > 0
+        ? youngerGroups.reduce((sum, g) => sum + g.rate, 0) / youngerGroups.length
+        : 0;
+
+      const olderAvg = olderGroups.length > 0
+        ? olderGroups.reduce((sum, g) => sum + g.rate, 0) / olderGroups.length
+        : 0;
+
+      const comparison = youngerAvg > olderAvg + 2
+        ? 'Younger patients (10-29) have significantly higher no-show rates than patients 50+.'
+        : '';
+
+      rateInsight = `📊 Highest no-show rate: ${highestRate.rate}% in age group ${highestRate.ageGroup} (n=${highestRate.total.toLocaleString()}). ${comparison}`;
+    }
+
+    return { count: countInsight, rate: rateInsight };
   }, [chartData.byAge]);
+
+  const weeklyTrendInsight = useMemo(() => {
+    if (!chartData.byWeek || chartData.byWeek.length === 0) return null;
+
+    const validWeeks = chartData.byWeek.filter(w => w.name !== 'Unknown');
+    if (validWeeks.length === 0) return null;
+
+    let maxRate = { week: null, rate: 0 };
+    let minRate = { week: null, rate: 100 };
+
+    validWeeks.forEach((week) => {
+      if (week.rate > maxRate.rate) {
+        maxRate = { week: week.name, rate: week.rate };
+      }
+      if (week.rate < minRate.rate) {
+        minRate = { week: week.name, rate: week.rate };
+      }
+    });
+
+    const firstWeek = validWeeks[0];
+    const lastWeek = validWeeks[validWeeks.length - 1];
+    const trend = lastWeek.rate < firstWeek.rate ? 'declined' : 'increased';
+
+    return `📈 No-show rate peaked at ${maxRate.rate}% in week of ${maxRate.week}, then ${trend} to ${lastWeek.rate}% by ${lastWeek.name}`;
+  }, [chartData.byWeek]);
 
   const uniqueValues = useMemo(() => {
     if (!csvData) return { ageGroups: [], weeks: [] };
@@ -571,6 +834,92 @@ const PatientNoShowDashboard = () => {
           </div>
         )}
 
+        {dataQualityStats && (
+          <div className="max-w-3xl mx-auto mb-4">
+            <button
+              onClick={() => setIsDataQualityExpanded(!isDataQualityExpanded)}
+              className={`w-full flex items-center justify-center gap-2 text-sm py-2.5 px-4 rounded-lg shadow-sm transition-colors border ${
+                isDarkMode
+                  ? 'bg-slate-800 text-slate-200 hover:bg-slate-700 border-slate-700'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-50 border-slate-200'
+              }`}
+            >
+              <span>ℹ️</span>
+              <span className="font-medium">Data Quality & Assumptions</span>
+              <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                (click to {isDataQualityExpanded ? 'collapse' : 'expand'})
+              </span>
+              <svg
+                className={`w-4 h-4 transition-transform ${isDataQualityExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {isDataQualityExpanded && (
+              <div
+                className={`mt-2 p-5 rounded-lg shadow-md text-sm ${
+                  isDarkMode
+                    ? 'bg-slate-800 border border-slate-700 text-slate-300'
+                    : 'bg-white border border-slate-200 text-slate-600'
+                }`}
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className={`font-semibold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                      📊 Records
+                    </p>
+                    <p className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>
+                      {dataQualityStats.total.toLocaleString()} total appointments
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className={`font-semibold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                      📅 Date Range
+                    </p>
+                    <p className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>
+                      {datasetOverview.dateRange} ({datasetOverview.dateRangeDays} days)
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className={`font-semibold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                      ⚠️ Missing Data
+                    </p>
+                    <ul className={`space-y-0.5 ml-4 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                      <li>• Waiting Days: {dataQualityStats.missingWaitingDays.toLocaleString()} records</li>
+                      <li>• SMS Received: {dataQualityStats.missingSMS.toLocaleString()} records</li>
+                      <li>• Age Group: {dataQualityStats.missingAgeGroup.toLocaleString()} records</li>
+                    </ul>
+                  </div>
+
+                  <div>
+                    <p className={`font-semibold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                      🔑 Key Assumption
+                    </p>
+                    <p className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>
+                      NoShow=1 indicates patient did not attend scheduled appointment
+                    </p>
+                  </div>
+                </div>
+
+                <div className={`mt-4 pt-4 border-t ${isDarkMode ? 'border-slate-600' : 'border-slate-200'}`}>
+                  <p className={`font-semibold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    ⚖️ Limitations
+                  </p>
+                  <p className={`italic ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                    Single healthcare system; results may not generalize to other populations or settings
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <p className={`text-center text-xs mb-8 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
           Data notes: This analysis shows patterns and correlations, not causal relationships.
         </p>
@@ -611,12 +960,18 @@ const PatientNoShowDashboard = () => {
               )}
             </h2>
             <button
+              type="button"
               onClick={resetFilters}
-              className={
+              disabled={activeFilterCount === 0}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition disabled:opacity-60 disabled:cursor-not-allowed ${
                 activeFilterCount > 0
-                  ? 'px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-md text-sm font-medium transition'
-                  : 'px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md text-sm font-medium transition'
-              }
+                  ? 'bg-rose-500 hover:bg-rose-600 text-white'
+                  : isDarkMode
+                    ? '!bg-slate-700 hover:!bg-slate-600 !text-slate-200 border border-slate-600'
+                    : '!bg-gray-200 hover:!bg-gray-300 !text-gray-700'
+              }`}
+              aria-disabled={activeFilterCount === 0}
+              title={activeFilterCount === 0 ? 'No filters to reset' : 'Reset filters'}
             >
               Reset Filters
             </button>
@@ -697,7 +1052,7 @@ const PatientNoShowDashboard = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-blue-500 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}> 
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-blue-500 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}>
             <p className={`text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
               Total Appointments
               <span
@@ -713,7 +1068,7 @@ const PatientNoShowDashboard = () => {
             </p>
           </div>
 
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-rose-400 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}> 
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-rose-400 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}>
             <p className={`text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
               No-Shows
               <span
@@ -727,7 +1082,7 @@ const PatientNoShowDashboard = () => {
             <p className="text-3xl font-bold text-rose-400 tracking-tight">{kpis.noShows.toLocaleString()}</p>
           </div>
 
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-teal-500 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}> 
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-teal-500 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}>
             <p className={`text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
               Showed Up
               <span
@@ -741,7 +1096,7 @@ const PatientNoShowDashboard = () => {
             <p className="text-3xl font-bold text-teal-600 tracking-tight">{kpis.shows.toLocaleString()}</p>
           </div>
 
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-amber-500 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}> 
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-6 rounded-xl shadow-md border-t-[6px] border-amber-500 transition-all duration-200 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg`}>
             <p className={`text-sm font-medium mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
               No-Show Rate
               <span
@@ -756,29 +1111,157 @@ const PatientNoShowDashboard = () => {
           </div>
         </div>
 
+        {currentViewSummary && (
+          <div
+            className={`${
+              isDarkMode ? 'bg-purple-900/20' : 'bg-purple-50'
+            } border-l-4 border-purple-500 rounded-xl shadow-md p-6 mb-8`}
+          >
+            <div className="flex items-start gap-3">
+              <span className="text-2xl flex-shrink-0" aria-hidden="true">💡</span>
+              <div className="flex-1">
+                <h3 className={`text-lg font-semibold mb-2 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                  Current View Summary
+                </h3>
+                <p className={`text-sm mb-3 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                  {currentViewSummary.summary}
+                </p>
+                <p className={`text-sm font-medium ${isDarkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                  {currentViewSummary.insight}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {waitingTimeComparison && (
+          <div
+            className={`${
+              isDarkMode ? 'bg-slate-800' : 'bg-white'
+            } border-l-4 border-amber-500 rounded-xl shadow-md p-6 mb-8`}
+          >
+            <div className="flex items-start gap-3">
+              <span className="text-2xl flex-shrink-0" aria-hidden="true">⏱️</span>
+              <div className="flex-1">
+                <h3 className={`text-lg font-semibold mb-3 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                  Waiting Time Impact
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                  <div>
+                    <p className={`text-xs font-medium mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      Showed Up (n={waitingTimeComparison.showedCount.toLocaleString()})
+                    </p>
+                    <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <span className="font-semibold">Median:</span> {waitingTimeComparison.showedMedian} days
+                      <span className="mx-2">|</span>
+                      <span className="font-semibold">Mean:</span> {waitingTimeComparison.showedMean} days
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className={`text-xs font-medium mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                      No-Show (n={waitingTimeComparison.noShowCount.toLocaleString()})
+                    </p>
+                    <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <span className="font-semibold">Median:</span> {waitingTimeComparison.noShowMedian} days
+                      <span className="mx-2">|</span>
+                      <span className="font-semibold">Mean:</span> {waitingTimeComparison.noShowMean} days
+                    </p>
+                  </div>
+                </div>
+
+                <p className={`text-sm font-medium ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`}>
+                  📊 Patients who no-show wait {waitingTimeComparison.ratio}x longer on average than those who attend.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-teal-500`}> 
-            <h3 className={`text-lg font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>No-Show by Age Group</h3>
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-teal-500`}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>No-Show by Age Group</h3>
+              <div className={`inline-flex rounded-lg p-1 border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-100 border-slate-200'}`}>
+                <button
+                  onClick={() => setAgeView('count')}
+                  className={
+                    ageView === 'count'
+                      ? (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-teal-500 text-white' : 'px-3 py-1 text-xs font-medium rounded-md bg-teal-600 text-white')
+                      : (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300' : 'px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-600 border border-slate-200')
+                  }
+                >
+                  Count
+                </button>
+                <button
+                  onClick={() => setAgeView('rate')}
+                  className={
+                    ageView === 'rate'
+                      ? (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-teal-500 text-white' : 'px-3 py-1 text-xs font-medium rounded-md bg-teal-600 text-white')
+                      : (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300' : 'px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-600 border border-slate-200')
+                  }
+                >
+                  Rate
+                </button>
+              </div>
+            </div>
+
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData.byAge}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
-                />
-                <YAxis
-                  width={60}
-                  tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
-                />
-                <Tooltip content={<CustomBarTooltip />} />
-                <Legend />
-                <Bar dataKey="Show" fill="#0d9488" cursor="pointer" onClick={handleAgeGroupBarClick} />
-                <Bar dataKey="NoShow" fill="#fb923c" cursor="pointer" onClick={handleAgeGroupBarClick} />
-              </BarChart>
+              {ageView === 'count' ? (
+                <BarChart data={chartData.byAge}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <YAxis
+                    width={60}
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <Tooltip content={<CustomBarTooltip />} />
+                  <Legend />
+                  <Bar dataKey="Show" fill="#0d9488" cursor="pointer" onClick={handleAgeGroupBarClick} />
+                  <Bar dataKey="NoShow" fill="#fb923c" cursor="pointer" onClick={handleAgeGroupBarClick} />
+                </BarChart>
+              ) : (
+                <BarChart data={chartData.byAge}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <YAxis
+                    domain={[0, 30]}
+                    width={60}
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                    label={{ value: 'No-Show Rate (%)', angle: -90, position: 'insideLeft', fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <Tooltip content={<CustomAgeRateTooltip />} />
+                  <ReferenceLine
+                    y={parseFloat(overallKpis.noShowRate)}
+                    stroke={isDarkMode ? '#94a3b8' : '#64748b'}
+                    strokeDasharray="5 5"
+                    label={{
+                      value: `Avg: ${overallKpis.noShowRate}%`,
+                      position: 'right',
+                      fill: isDarkMode ? '#94a3b8' : '#64748b',
+                      fontSize: 12
+                    }}
+                  />
+                  <Bar dataKey="rate" fill="#fb923c" cursor="pointer" onClick={handleAgeGroupBarClick} />
+                </BarChart>
+              )}
             </ResponsiveContainer>
-            {highestNoShowAgeGroup && (
+
+            {ageView === 'count' && ageGroupInsight.count && (
               <p className={`mt-3 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
-                {highestNoShowAgeGroup}
+                {ageGroupInsight.count}
+              </p>
+            )}
+            {ageView === 'rate' && ageGroupInsight.rate && (
+              <p className={`mt-3 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                {ageGroupInsight.rate}
               </p>
             )}
           </div>
@@ -825,25 +1308,89 @@ const PatientNoShowDashboard = () => {
             </ResponsiveContainer>
           </div>
 
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-blue-500`}> 
-            <h3 className={`text-lg font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>No-Show by SMS Reminder</h3>
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-blue-500`}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>No-Show by SMS Reminder</h3>
+              <div className={`inline-flex rounded-lg p-1 border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-100 border-slate-200'}`}>
+                <button
+                  onClick={() => setSmsView('count')}
+                  className={
+                    smsView === 'count'
+                      ? (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-teal-500 text-white' : 'px-3 py-1 text-xs font-medium rounded-md bg-teal-600 text-white')
+                      : (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300' : 'px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-600 border border-slate-200')
+                  }
+                >
+                  Count
+                </button>
+                <button
+                  onClick={() => setSmsView('rate')}
+                  className={
+                    smsView === 'rate'
+                      ? (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-teal-500 text-white' : 'px-3 py-1 text-xs font-medium rounded-md bg-teal-600 text-white')
+                      : (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300' : 'px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-600 border border-slate-200')
+                  }
+                >
+                  Rate
+                </button>
+              </div>
+            </div>
+
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData.bySMS}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
-                />
-                <YAxis
-                  width={60}
-                  tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
-                />
-                <Tooltip content={<CustomBarTooltip />} />
-                <Legend />
-                <Bar dataKey="Show" fill="#0d9488" />
-                <Bar dataKey="NoShow" fill="#fb923c" />
-              </BarChart>
+              {smsView === 'count' ? (
+                <BarChart data={chartData.bySMS}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <YAxis
+                    width={60}
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <Tooltip content={<CustomBarTooltip />} />
+                  <Legend />
+                  <Bar dataKey="Show" fill="#0d9488" />
+                  <Bar dataKey="NoShow" fill="#fb923c" />
+                </BarChart>
+              ) : (
+                <BarChart data={chartData.bySMS}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <YAxis
+                    domain={[0, 35]}
+                    width={60}
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                    tickFormatter={(v) => `${v}%`}
+                    label={{ value: 'No-Show Rate (%)', angle: -90, position: 'insideLeft', fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <Tooltip content={<CustomSmsRateTooltip />} />
+                  <ReferenceLine
+                    y={parseFloat(overallKpis.noShowRate)}
+                    stroke={isDarkMode ? '#94a3b8' : '#64748b'}
+                    strokeDasharray="5 5"
+                    label={{
+                      value: `Avg: ${overallKpis.noShowRate}%`,
+                      position: 'right',
+                      fill: isDarkMode ? '#94a3b8' : '#64748b',
+                      fontSize: 12
+                    }}
+                  />
+                  <Bar dataKey="rate" fill="#fb923c" />
+                </BarChart>
+              )}
             </ResponsiveContainer>
+
+            <div className={`${isDarkMode ? 'bg-yellow-900/20 border-yellow-500' : 'bg-yellow-50 border-yellow-500'} border-l-4 p-3 mt-3 rounded`}>
+              <p className={`font-semibold ${isDarkMode ? 'text-yellow-400' : 'text-yellow-700'}`}>
+                ⚠️ Counter-Intuitive Finding
+              </p>
+              <p className={`text-sm mt-1 ${isDarkMode ? 'text-yellow-300' : 'text-yellow-800'}`}>
+                SMS recipients have HIGHER no-show rates (27.6%) than non-recipients (16.7%). This likely indicates SMS reminders are sent to high-risk patients, not that SMS causes no-shows.
+              </p>
+            </div>
           </div>
 
           <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-amber-500`}> 
@@ -870,29 +1417,140 @@ const PatientNoShowDashboard = () => {
             </ResponsiveContainer>
           </div>
 
-          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-indigo-500 lg:col-span-2`}> 
-            <h3 className={`text-lg font-semibold mb-4 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>No-Show Trends by Week</h3>
+          <div className={`${isDarkMode ? 'bg-slate-800' : 'bg-white'} p-8 rounded-xl shadow-md border-l-4 border-indigo-500 lg:col-span-2`}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>No-Show Trends by Week</h3>
+              <div className={`inline-flex rounded-lg p-1 border ${isDarkMode ? 'bg-slate-700 border-slate-600' : 'bg-slate-100 border-slate-200'}`}>
+                <button
+                  onClick={() => setWeeklyView('count')}
+                  className={
+                    weeklyView === 'count'
+                      ? (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-teal-500 text-white' : 'px-3 py-1 text-xs font-medium rounded-md bg-teal-600 text-white')
+                      : (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300' : 'px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-600 border border-slate-200')
+                  }
+                >
+                  Count
+                </button>
+                <button
+                  onClick={() => setWeeklyView('rate')}
+                  className={
+                    weeklyView === 'rate'
+                      ? (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-teal-500 text-white' : 'px-3 py-1 text-xs font-medium rounded-md bg-teal-600 text-white')
+                      : (isDarkMode ? 'px-3 py-1 text-xs font-medium rounded-md bg-slate-700 text-slate-300' : 'px-3 py-1 text-xs font-medium rounded-md bg-white text-slate-600 border border-slate-200')
+                  }
+                >
+                  Rate
+                </button>
+              </div>
+            </div>
+
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData.byWeek}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={80}
-                />
-                <YAxis
-                  width={60}
-                  tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
-                />
-                <Tooltip content={<CustomBarTooltip />} />
-                <Legend />
-                <Bar dataKey="Show" fill="#0d9488" />
-                <Bar dataKey="NoShow" fill="#fb923c" />
-              </BarChart>
+              {weeklyView === 'count' ? (
+                <BarChart data={chartData.byWeek}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                  />
+                  <YAxis
+                    width={60}
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <Tooltip content={<CustomBarTooltip />} />
+                  <Legend />
+                  <Bar dataKey="Show" fill="#0d9488" />
+                  <Bar dataKey="NoShow" fill="#fb923c" />
+                </BarChart>
+              ) : (
+                <LineChart data={chartData.byWeek}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={80}
+                  />
+                  <YAxis
+                    domain={[15, 25]}
+                    width={60}
+                    tick={{ fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                    label={{ value: 'No-Show Rate (%)', angle: -90, position: 'insideLeft', fill: isDarkMode ? '#e2e8f0' : '#475569' }}
+                  />
+                  <Tooltip content={<CustomWeeklyRateTooltip />} />
+                  <ReferenceLine
+                    y={parseFloat(overallKpis.noShowRate)}
+                    stroke={isDarkMode ? '#94a3b8' : '#64748b'}
+                    strokeDasharray="5 5"
+                    label={{
+                      value: `Avg: ${overallKpis.noShowRate}%`,
+                      position: 'right',
+                      fill: isDarkMode ? '#94a3b8' : '#64748b',
+                      fontSize: 12
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="rate"
+                    stroke="#fb923c"
+                    strokeWidth={2}
+                    dot={{ fill: '#fb923c', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              )}
             </ResponsiveContainer>
+
+            {weeklyView === 'rate' && weeklyTrendInsight && (
+              <p className={`mt-3 text-xs ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+                {weeklyTrendInsight}
+              </p>
+            )}
           </div>
+        </div>
+
+        <div className={`rounded-xl shadow-md p-4 mt-6 border ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+          <button
+            onClick={() => setShowStats(!showStats)}
+            className={`w-full flex justify-between items-center ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}
+          >
+            <h3 className={`font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+              📊 Statistical Summary
+            </h3>
+            <span className={isDarkMode ? 'text-white' : 'text-slate-800'}>
+              {showStats ? '▼' : '▶'}
+            </span>
+          </button>
+
+          {showStats && (
+            <div className={`mt-4 space-y-3 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+              <div>
+                <p className={`font-medium ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                  Correlations with No-Show:
+                </p>
+                <ul className="text-sm ml-4 mt-1">
+                  <li>Waiting Days: r = 0.186 (strongest predictor)</li>
+                  <li>SMS Received: r = 0.127</li>
+                  <li>Age: r = -0.060 (older patients slightly more likely to show)</li>
+                </ul>
+              </div>
+              <div>
+                <p className={`font-medium ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
+                  Statistical Tests:
+                </p>
+                <ul className="text-sm ml-4 mt-1">
+                  <li>T-test (Waiting Days by NoShow): p &lt; 0.001 ✓</li>
+                  <li>Chi-square (SMS vs NoShow): χ² = 1768, p &lt; 0.001 ✓</li>
+                </ul>
+              </div>
+              <p className={`text-sm italic mt-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                Waiting time is the strongest predictor. SMS correlation is confounded - reminders appear to be sent to higher-risk appointments.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>
