@@ -1039,9 +1039,35 @@ const PatientNoShowDashboard = () => {
           </div>
         )}
 
-        <p className={`text-center text-xs mb-8 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+        <p className={`text-center text-xs mb-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
           Data notes: This analysis shows patterns and correlations, not causal relationships.
         </p>
+
+        <div className="flex justify-center gap-3 items-center mb-8">
+          <a
+            href="/publicsafefinalnoshowdataset.csv"
+            download="patient_noshow_dataset.csv"
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500/40 ${
+              isDarkMode
+                ? 'bg-slate-700 border border-slate-600 text-slate-200 hover:bg-slate-600'
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            📥 Download Dataset
+          </a>
+          <a
+            href={COLAB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500/40 ${
+              isDarkMode
+                ? 'bg-slate-700 border border-slate-600 text-slate-200 hover:bg-slate-600'
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            📓 Open in Colab
+          </a>
+        </div>
 
         <div className={`rounded-xl p-6 mb-8 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}>
           <h2 className={`text-xl font-bold mb-3 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>
