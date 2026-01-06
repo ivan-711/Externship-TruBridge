@@ -1,9 +1,11 @@
 import Papa from 'papaparse';
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+
+const COLAB_URL = 'https://colab.research.google.com/drive/1zJEDIAIp1cpNJCIxTw7wu5hTN5WrfkP7?usp=sharing';
 
 const PatientNoShowDashboard = () => {
   const [csvData, setCsvData] = useState(null);
@@ -20,8 +22,73 @@ const PatientNoShowDashboard = () => {
   const [smsView, setSmsView] = useState('count');
   const [showStats, setShowStats] = useState(false);
 
+  // Auto-load CSV on page load
+  useEffect(() => {
+    const autoLoadCSV = async () => {
+      try {
+        setIsLoading(true);
 
-  // Helper functions (type-safe parsing)
+        // Fetch CSV from public folder
+        const csvUrl = '/publicsafefinalnoshowdataset.csv';
+
+        console.log('Auto-loading CSV from:', csvUrl);
+
+        const response = await fetch(csvUrl);
+
+        // Check if fetch was successful
+        if (!response.ok) {
+          throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
+        }
+
+        const text = await response.text();
+
+        // Guard: Check if response is HTML (404 page) instead of CSV
+        if (text.trim().startsWith('<!') || text.trim().startsWith('<html')) {
+          throw new Error('Received HTML instead of CSV - file may not exist');
+        }
+
+        // Guard: Check if it looks like a CSV (has comma or common headers)
+        if (!text.includes(',') || text.trim().length < 50) {
+          throw new Error('Response does not appear to be valid CSV data');
+        }
+
+        // Parse using existing parseCSV function
+        const parsedData = parseCSV(text);
+
+        // Guard: Validate parsed data has expected columns
+        if (!parsedData || parsedData.length === 0) {
+          throw new Error('Parsed CSV is empty');
+        }
+
+        const firstRow = parsedData[0];
+        const requiredColumns = ['NoShow', 'AppointmentDay'];
+        const missingColumns = requiredColumns.filter(col => !(col in firstRow));
+
+        if (missingColumns.length > 0) {
+          throw new Error(`CSV missing required columns: ${missingColumns.join(', ')}`);
+        }
+
+        console.log(`Auto-load successful: ${parsedData.length} rows loaded`);
+
+        // Set the data - this will trigger dashboard render
+        setCsvData(parsedData);
+
+      } catch (error) {
+        console.error('Auto-load failed:', error.message);
+        console.log('Falling back to manual upload mode');
+        // Don't set csvData - this will show the upload screen
+      } finally {
+        // ALWAYS turn off loading to prevent infinite loader
+        setIsLoading(false);
+      }
+    };
+
+    // Only auto-load if we don't already have data
+    if (!csvData) {
+      autoLoadCSV();
+    }
+  }, []);
+
   const toNum = (val) => {
     if (val === null || val === undefined) return null;
     const s = String(val).trim();
@@ -35,6 +102,33 @@ const PatientNoShowDashboard = () => {
     if (n === 1) return '1';
     if (n === 0) return '0';
     return String(val ?? '').trim();
+  };
+
+  const fixAgeGroupLabel = (label) => {
+    if (!label) return label;
+    const str = String(label);
+
+    // Fix "19-Oct" or "Oct-19" back to "10-19"
+    if (str.toLowerCase().includes('oct') && str.includes('19')) {
+      return '10-19';
+    }
+    // Fix any other potential date conversions
+    if (str.match(/^\d{1,2}-[A-Za-z]{3}$/) || str.match(/^[A-Za-z]{3}-\d{1,2}$/)) {
+      // This looks like a date format, try to convert back
+      const monthMap = {
+        'jan': '1', 'feb': '2', 'mar': '3', 'apr': '4', 'may': '5', 'jun': '6',
+        'jul': '7', 'aug': '8', 'sep': '9', 'oct': '10', 'nov': '11', 'dec': '12'
+      };
+      for (const [month, num] of Object.entries(monthMap)) {
+        if (str.toLowerCase().includes(month)) {
+          const dayMatch = str.match(/\d+/);
+          if (dayMatch) {
+            return `${num}-${dayMatch[0]}`;
+          }
+        }
+      }
+    }
+    return str;
   };
 
   const getWaitingDays = (row) => {
@@ -147,6 +241,7 @@ const PatientNoShowDashboard = () => {
     });
   };
 
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -238,7 +333,7 @@ const PatientNoShowDashboard = () => {
     if (!csvData) return [];
 
     return csvData.filter((row) => {
-      if (filters.ageGroup !== 'All' && row.AgeGroup !== filters.ageGroup) return false;
+      if (filters.ageGroup !== 'All' && fixAgeGroupLabel(row.AgeGroup) !== filters.ageGroup) return false;
       if (filters.smsReceived !== 'All' && row.SMS_received !== filters.smsReceived) return false;
       if (filters.week !== 'All' && row.Week !== filters.week) return false;
       return true;
@@ -373,10 +468,17 @@ const PatientNoShowDashboard = () => {
   const keyTakeaways = useMemo(() => {
     if (!filteredData.length) return [];
 
-    const overallRate = `Overall no-show rate is ${kpis.noShowRate}% (${kpis.noShows} of ${kpis.total} appointments)`;
+    const currentSelectionRate = `No-show rate in current selection is ${kpis.noShowRate}% (${kpis.noShows} of ${kpis.total} appointments)`;
 
-    const withSMS = filteredData.filter((row) => row.SMS_received === '1');
-    const withoutSMS = filteredData.filter((row) => row.SMS_received === '0');
+    // For SMS comparison, ignore SMS filter but respect age and week filters
+    const dataForSmsCompare = !csvData ? [] : csvData.filter((row) => {
+      if (filters.ageGroup !== 'All' && fixAgeGroupLabel(row.AgeGroup) !== filters.ageGroup) return false;
+      if (filters.week !== 'All' && row.Week !== filters.week) return false;
+      return true;
+    });
+
+    const withSMS = dataForSmsCompare.filter((row) => row.SMS_received === '1');
+    const withoutSMS = dataForSmsCompare.filter((row) => row.SMS_received === '0');
 
     const smsNoShowCount = withSMS.filter((r) => r.NoShow === 1).length;
     const noSmsNoShowCount = withoutSMS.filter((r) => r.NoShow === 1).length;
@@ -384,9 +486,18 @@ const PatientNoShowDashboard = () => {
     const smsNoShowRate = withSMS.length ? ((smsNoShowCount / withSMS.length) * 100).toFixed(1) : '0.0';
     const noSmsNoShowRate = withoutSMS.length ? ((noSmsNoShowCount / withoutSMS.length) * 100).toFixed(1) : '0.0';
 
-    const smsComparison =
-      `SMS reminder data: ${smsNoShowRate}% no-show rate with SMS (n=${withSMS.length}) vs. ` +
-      `${noSmsNoShowRate}% without SMS (n=${withoutSMS.length}).`;
+    let smsComparison = '';
+    // If SMS filter is active, hide the comparison
+    if (filters.smsReceived !== 'All') {
+      const filterType = filters.smsReceived === '1' ? 'Yes' : 'No';
+      smsComparison = `📱 SMS filter active: showing only ${filterType} SMS appointments. SMS comparison hidden.`;
+    } else if (withSMS.length === 0 || withoutSMS.length === 0) {
+      smsComparison = 'Not enough data for SMS comparison under current filters. Clear filters to compare.';
+    } else {
+      smsComparison =
+        `SMS reminder data: ${smsNoShowRate}% no-show rate with SMS (n=${withSMS.length}) vs. ` +
+        `${noSmsNoShowRate}% without SMS (n=${withoutSMS.length}).`;
+    }
 
     const waitingBins = {
       '0': { name: '0 days', total: 0, noShows: 0 },
@@ -438,8 +549,8 @@ const PatientNoShowDashboard = () => {
       waitingInsight = `Most appointments have ${highestVolumeBin.name} waiting time with ${volumeRate}% no-show rate (n=${highestVolumeBin.total}).`;
     }
 
-    return [overallRate, smsComparison, waitingInsight].filter(Boolean);
-  }, [filteredData, kpis]);
+    return [currentSelectionRate, smsComparison, waitingInsight].filter(Boolean);
+  }, [filteredData, kpis, csvData, filters]);
 
   const CustomBarTooltip = ({ active, payload }) => {
     if (!active || !payload || !payload.length) return null;
@@ -487,9 +598,7 @@ const PatientNoShowDashboard = () => {
         className={`${isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-white text-slate-700 border-gray-300'} p-3 border rounded shadow-lg`}
       >
         <p className="font-semibold mb-1">{data.name}</p>
-        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}%</p>
-        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Total: {data.total} appointments</p>
-        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>No-shows: {data.noShows}</p>
+        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}% (n={data.total.toLocaleString()})</p>
       </div>
     );
   };
@@ -502,8 +611,7 @@ const PatientNoShowDashboard = () => {
         className={`${isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-white text-slate-700 border-gray-300'} p-3 border rounded shadow-lg`}
       >
         <p className="font-semibold mb-1">Age Group: {data.name}</p>
-        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}%</p>
-        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Total: {data.total.toLocaleString()}</p>
+        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}% (n={data.total.toLocaleString()})</p>
       </div>
     );
   };
@@ -516,8 +624,7 @@ const PatientNoShowDashboard = () => {
         className={`${isDarkMode ? 'bg-slate-800 text-slate-200 border-slate-700' : 'bg-white text-slate-700 border-gray-300'} p-3 border rounded shadow-lg`}
       >
         <p className="font-semibold mb-1">{data.name}</p>
-        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}%</p>
-        <p className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Total: {data.total.toLocaleString()}</p>
+        <p style={{ color: '#fb923c' }}>No-Show Rate: {data.rate}% (n={data.total.toLocaleString()})</p>
       </div>
     );
   };
@@ -539,7 +646,7 @@ const PatientNoShowDashboard = () => {
 
     const ageGroups = {};
     filteredData.forEach((row) => {
-      const age = row.AgeGroup || 'Unknown';
+      const age = fixAgeGroupLabel(row.AgeGroup) || 'Unknown';
       if (!ageGroups[age]) ageGroups[age] = { name: age, NoShow: 0, Show: 0 };
       if (row.NoShow === 1) ageGroups[age].NoShow++;
       else ageGroups[age].Show++;
@@ -739,7 +846,7 @@ const PatientNoShowDashboard = () => {
       return getNum(a) - getNum(b);
     };
 
-    const ageGroups = [...new Set(csvData.map((row) => row.AgeGroup))].filter(Boolean).sort(sortAgeGroups);
+    const ageGroups = [...new Set(csvData.map((row) => fixAgeGroupLabel(row.AgeGroup)))].filter(Boolean).sort(sortAgeGroups);
     const weeks = [...new Set(csvData.map((row) => row.Week))].filter(Boolean).sort((a, b) => {
       if (a === 'Unknown') return 1;
       if (b === 'Unknown') return -1;
@@ -831,6 +938,18 @@ const PatientNoShowDashboard = () => {
         {datasetOverview && (
           <div className={`text-center text-sm mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>
             <strong>Dataset Overview:</strong> {datasetOverview.total.toLocaleString()} appointments spanning {datasetOverview.dateRange}. {datasetOverview.noShowDef}.
+            <br />
+            <span className="text-xs">
+              Source:{' '}
+              <a
+                href={COLAB_URL}
+                target="_blank"
+                rel="noreferrer"
+                className={`underline ${isDarkMode ? 'text-slate-300 hover:text-slate-200' : 'text-slate-600 hover:text-slate-800'}`}
+              >
+                Google Colab EDA notebook — open notebook
+              </a>
+            </span>
           </div>
         )}
 
@@ -1111,6 +1230,13 @@ const PatientNoShowDashboard = () => {
           </div>
         </div>
 
+        <div className={`text-center text-sm mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+          <span className="inline-flex items-center gap-1">
+            <span>ℹ️</span>
+            <span>All stats and charts reflect current filters (n = {filteredData.length.toLocaleString()} appointments)</span>
+          </span>
+        </div>
+
         {currentViewSummary && (
           <div
             className={`${
@@ -1383,6 +1509,12 @@ const PatientNoShowDashboard = () => {
               )}
             </ResponsiveContainer>
 
+            {chartData.bySMS && (chartData.bySMS[0]?.total === 0 || chartData.bySMS[1]?.total === 0) && (
+              <p className={`text-xs mt-2 italic ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                Note: {chartData.bySMS[0]?.total === 0 ? 'No appointments in "SMS Sent"' : 'No appointments in "No SMS"'} for the current filters.
+              </p>
+            )}
+
             <div className={`${isDarkMode ? 'bg-yellow-900/20 border-yellow-500' : 'bg-yellow-50 border-yellow-500'} border-l-4 p-3 mt-3 rounded`}>
               <p className={`font-semibold ${isDarkMode ? 'text-yellow-400' : 'text-yellow-700'}`}>
                 ⚠️ Counter-Intuitive Finding
@@ -1548,6 +1680,17 @@ const PatientNoShowDashboard = () => {
               </div>
               <p className={`text-sm italic mt-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                 Waiting time is the strongest predictor. SMS correlation is confounded - reminders appear to be sent to higher-risk appointments.
+              </p>
+              <p className={`text-xs mt-3 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                Source: Google Colab EDA notebook —{' '}
+                <a
+                  href={COLAB_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`underline ${isDarkMode ? 'text-slate-300 hover:text-slate-200' : 'text-slate-600 hover:text-slate-800'}`}
+                >
+                  open notebook
+                </a>
               </p>
             </div>
           )}
