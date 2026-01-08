@@ -1,19 +1,90 @@
-# Patient No-Show Dashboard (React + Vite)
+# TruBridge Patient No-Show Analysis (EDA + dashboard)
 
-Live demo: https://patient-noshow-dashboard.vercel.app/  
-Repo: https://github.com/ivan-711/Externship-TruBridge
+**Live dashboard:** https://patient-noshow-dashboard.vercel.app/  
+**Repo:** https://github.com/ivan-711/Externship-TruBridge  
+**Colab notebook:** (add link here)
 
-## What this is
-React dashboard for exploring patient no-show patterns by:
-- Age group
-- SMS reminder status
-- Waiting time (lead time)
-- Week-to-week trend
+Patient no-show analysis built from the Kaggle “Medical Appointment No Shows” dataset (May 2016).  
+I cleaned the raw data, engineered `WaitingDays`, ran basic statistical tests, trained a baseline logistic regression model, and published findings in a React dashboard.
 
-## Data
-The dashboard uses the cleaned dataset produced in the Colab notebook.
+---
 
-## Run locally
+## What’s included
+
+- **Final Colab notebook** (cleaning + EDA + stats + baseline model)
+- **Datasets**
+  - `cleaned_appointments.csv` (analysis-ready)
+  - `publicsafefinalnoshowdataset.csv` (public-safe: removed `PatientId` and `AppointmentId` for the dashboard)
+- **React dashboard** (Vite + React)
+
+---
+
+## Key questions
+
+- How does **waiting time (lead time)** relate to no-shows?
+- Do **SMS reminders** correlate with no-show rate?
+- Which **age groups** have higher no-show rates?
+- Do no-shows shift **week-to-week**?
+
+---
+
+## Data + target
+
+- **Source:** Kaggle “Medical Appointment No Shows” (May 2016)
+- **Target:** `NoShow` (0 = show, 1 = no-show)
+- **Key fields used:** `Age`, `SMS_received`, `ScheduledDay`, `AppointmentDay`
+- **Feature engineered:** `WaitingDays = AppointmentDay - ScheduledDay` (days)
+- **Cleaning rules (high level):**
+  - Dropped negative waiting days
+  - Kept waiting days in a realistic window (0–365)
+
+---
+
+## Results snapshot
+
+- No-show rate: **~20%**
+- WaitingDays is higher for no-shows (mean show ≈ **8.75** days vs mean no-show ≈ **15.84** days; p-value < **0.001**)
+- `SMS_received` is associated with different no-show rates (chi-square statistic ≈ **1767.98**, p-value < **0.001**)  
+  *Association only. This does not prove SMS causes no-shows.*
+
+---
+
+## Baseline model (logistic regression)
+
+- Features: `Age_normalized`, `WaitingDays_normalized`, `SMS_received`
+- Baseline accuracy (predict all “show”): **~0.7981**
+- Model accuracy: **~0.7960**
+- Takeaway: class imbalance + limited feature signal with this small feature set
+
+---
+
+## Dashboard screenshots
+
+**Overview**  
+![Dashboard overview (page 1)](patient-dashboard/src/assets/00_dashboard_overview_page_1.png)  
+![Dashboard overview (page 2)](patient-dashboard/src/assets/00_dashboard_overview_page_2.png)
+
+**Charts**  
+![No-show by age group](patient-dashboard/src/assets/01_noshow_by_age_group.png)  
+![Overall distribution](patient-dashboard/src/assets/02_overall_distribution.png)  
+![No-show by SMS reminder](patient-dashboard/src/assets/03_noshow_by_sms_reminder.png)  
+![No-show rate by waiting time](patient-dashboard/src/assets/04_noshow_rate_by_waiting_time.png)  
+![No-show trends by week](patient-dashboard/src/assets/05_noshow_trends_by_week.png)
+
+**Summary**  
+![Statistical summary](patient-dashboard/src/assets/06_statistical_summary.png)
+
+---
+
+## Repo structure
+
+- `patient-dashboard/` → React + Vite dashboard app
+- `*.csv` → cleaned datasets used for analysis + dashboard
+
+---
+
+## Run the dashboard locally
+
 ```bash
 cd patient-dashboard
 npm install
