@@ -13,7 +13,6 @@ I cleaned the raw data, engineered `WaitingDays`, ran basic statistical tests, t
 
 - **Final Colab notebook** (cleaning + EDA + stats + baseline model)
 - **Datasets**
-  - `cleaned_appointments.csv` (analysis-ready)
   - `publicsafefinalnoshowdataset.csv` (public-safe: removed `PatientId` and `AppointmentId` for the dashboard)
 - **React dashboard** (Vite + React)
 
