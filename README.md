@@ -3,6 +3,7 @@
 **Live dashboard:** https://patient-noshow-dashboard.vercel.app/  
 **Repo:** https://github.com/ivan-711/Externship-TruBridge  
 **Colab notebook:** https://colab.research.google.com/drive/1Yb-MIOGAxo0x3LVX7mIhcRuF0lFKLEs_?usp=sharing
+**One-pager (PDF):** docs/one-pager/TruBridge_NoShow_OnePager_IvanFlores.pdf
 
 Patient no-show analysis built from the Kaggle “Medical Appointment No Shows” dataset (May 2016).  
 I cleaned the raw data, engineered `WaitingDays`, ran basic statistical tests, trained a baseline logistic regression model, and published findings in a React dashboard.
