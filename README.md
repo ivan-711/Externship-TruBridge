@@ -61,18 +61,18 @@ I cleaned the raw data, engineered `WaitingDays`, ran basic statistical tests, t
 ## Dashboard screenshots
 
 **Overview**  
-![Dashboard overview (page 1)](patient-dashboard/src/assets/00_dashboard_overview_page_1.png)  
-![Dashboard overview (page 2)](patient-dashboard/src/assets/00_dashboard_overview_page_2.png)
+![Dashboard overview (page 1)](docs/screenshots/00_dashboard_overview_page_1.png)  
+![Dashboard overview (page 2)](docs/screenshots/00_dashboard_overview_page_2.png)
 
 **Charts**  
-![No-show by age group](patient-dashboard/src/assets/01_noshow_by_age_group.png)  
-![Overall distribution](patient-dashboard/src/assets/02_overall_distribution.png)  
-![No-show by SMS reminder](patient-dashboard/src/assets/03_noshow_by_sms_reminder.png)  
-![No-show rate by waiting time](patient-dashboard/src/assets/04_noshow_rate_by_waiting_time.png)  
-![No-show trends by week](patient-dashboard/src/assets/05_noshow_trends_by_week.png)
+![No-show by age group](docs/screenshots/01_noshow_by_age_group.png)  
+![Overall distribution](docs/screenshots/02_overall_distribution.png)  
+![No-show by SMS reminder](docs/screenshots/03_noshow_by_sms_reminder.png)  
+![No-show rate by waiting time](docs/screenshots/04_noshow_rate_by_waiting_time.png)  
+![No-show trends by week](docs/screenshots/05_noshow_trends_by_week.png)
 
 **Summary**  
-![Statistical summary](patient-dashboard/src/assets/06_statistical_summary.png)
+![Statistical summary](docs/screenshots/06_statistical_summary.png)
 
 ---
 
