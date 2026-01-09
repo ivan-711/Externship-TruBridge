@@ -2,7 +2,7 @@
 
 **Live dashboard:** https://patient-noshow-dashboard.vercel.app/  
 **Repo:** https://github.com/ivan-711/Externship-TruBridge  
-**Colab notebook:** https://colab.research.google.com/drive/1Yb-MIOGAxo0x3LVX7mIhcRuF0lFKLEs_?usp=sharing
+**Colab notebook:** https://colab.research.google.com/drive/1Yb-MIOGAxo0x3LVX7mIhcRuF0lFKLEs_?usp=sharing  
 **One-pager (PDF):** [one-pager-trubridge-noshow.pdf](docs/one-pager/one-pager-trubridge-noshow.pdf)
 
 Patient no-show analysis built from the Kaggle “Medical Appointment No Shows” dataset (May 2016).  
