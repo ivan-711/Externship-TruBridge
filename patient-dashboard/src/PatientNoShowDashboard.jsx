@@ -5,7 +5,9 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
-const COLAB_URL = 'https://colab.research.google.com/drive/1zJEDIAIp1cpNJCIxTw7wu5hTN5WrfkP7?usp=sharing';
+// Opens the corrected notebook straight from this repo, so the link always matches main.
+const COLAB_URL =
+  'https://colab.research.google.com/github/ivan-711/Externship-TruBridge/blob/main/docs/notebook/TruBridge_NoShow_Analysis_FINAL.ipynb';
 
 const PatientNoShowDashboard = () => {
   const [csvData, setCsvData] = useState(null);
@@ -303,7 +305,9 @@ const PatientNoShowDashboard = () => {
 
     const minDate = new Date(Math.min(...dates));
     const maxDate = new Date(Math.max(...dates));
-    const dateRange = `${minDate.toLocaleDateString()} – ${maxDate.toLocaleDateString()}`;
+    // Appointment dates are stored as UTC midnight; format in UTC so US time zones don't shift them back a day.
+    const fmt = (d) => d.toLocaleDateString(undefined, { timeZone: 'UTC' });
+    const dateRange = `${fmt(minDate)} – ${fmt(maxDate)}`;
 
     // Calculate date range in days
     const daysDiff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
@@ -496,7 +500,8 @@ const PatientNoShowDashboard = () => {
     } else {
       smsComparison =
         `SMS reminder data: ${smsNoShowRate}% no-show rate with SMS (n=${withSMS.length}) vs. ` +
-        `${noSmsNoShowRate}% without SMS (n=${withoutSMS.length}).`;
+        `${noSmsNoShowRate}% without SMS (n=${withoutSMS.length}). ` +
+        'Texts were only sent for appointments booked 3+ days ahead, so this raw comparison is confounded by lead time.';
     }
 
     const waitingBins = {
@@ -947,7 +952,7 @@ const PatientNoShowDashboard = () => {
                 rel="noreferrer"
                 className={`underline ${isDarkMode ? 'text-slate-300 hover:text-slate-200' : 'text-slate-600 hover:text-slate-800'}`}
               >
-                Google Colab EDA notebook — open notebook
+                Google Colab analysis notebook — open notebook
               </a>
             </span>
           </div>
@@ -1022,6 +1027,17 @@ const PatientNoShowDashboard = () => {
                     </p>
                     <p className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>
                       NoShow=1 indicates patient did not attend scheduled appointment
+                    </p>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <p className={`font-semibold mb-1.5 ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                      🧹 Cleaning
+                    </p>
+                    <p className={isDarkMode ? 'text-slate-300' : 'text-slate-600'}>
+                      Waiting days = calendar days from booking to appointment (same-day = 0). Of 110,527 raw records,
+                      removed 5 appointments dated before their booking, 1 negative age and 5 records with Age 115
+                      (110,516 kept). Patient and appointment ID columns were removed before publishing.
                     </p>
                   </div>
                 </div>
@@ -1324,7 +1340,7 @@ const PatientNoShowDashboard = () => {
                 </div>
 
                 <p className={`text-sm font-medium ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`}>
-                  📊 Patients who no-show wait {waitingTimeComparison.ratio}x longer on average than those who attend.
+                  📊 Missed appointments had been booked {waitingTimeComparison.ratio}x as far ahead, on average, as kept ones.
                 </p>
               </div>
             </div>
@@ -1543,10 +1559,10 @@ const PatientNoShowDashboard = () => {
 
             <div className={`${isDarkMode ? 'bg-yellow-900/20 border-yellow-500' : 'bg-yellow-50 border-yellow-500'} border-l-4 p-3 mt-3 rounded`}>
               <p className={`font-semibold ${isDarkMode ? 'text-yellow-400' : 'text-yellow-700'}`}>
-                ⚠️ Counter-Intuitive Finding
+                ⚠️ Read With Lead Time in Mind
               </p>
               <p className={`text-sm mt-1 ${isDarkMode ? 'text-yellow-300' : 'text-yellow-800'}`}>
-                SMS recipients have HIGHER no-show rates (27.6%) than non-recipients (16.7%). This likely indicates SMS reminders are sent to high-risk patients, not that SMS causes no-shows.
+                Overall, SMS recipients missed more often (27.6%) than non-recipients (16.7%). But texts were only sent for appointments booked 3+ days ahead, and same-day appointments are rarely missed. Among appointments booked 3+ days ahead, SMS recipients missed less often (27.6% vs 32.7%). This is an association, not proof that texts reduce no-shows.
               </p>
             </div>
           </div>
@@ -1701,14 +1717,15 @@ const PatientNoShowDashboard = () => {
                 </p>
                 <ul className="text-sm ml-4 mt-1">
                   <li>T-test (Waiting Days by NoShow): p &lt; 0.001 ✓</li>
-                  <li>Chi-square (SMS vs NoShow): χ² = 1768, p &lt; 0.001 ✓</li>
+                  <li>Chi-square (SMS vs NoShow, all appointments): χ² = 1768, p &lt; 0.001 ✓</li>
+                  <li>Chi-square (SMS vs NoShow, booked 3+ days ahead): χ² = 182, p &lt; 0.001 ✓</li>
                 </ul>
               </div>
               <p className={`text-sm italic mt-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                Waiting time is the strongest predictor. SMS correlation is confounded - reminders appear to be sent to higher-risk appointments.
+                Waiting time is the strongest predictor. The overall SMS correlation is confounded: texts were only sent for appointments booked 3+ days ahead, and among those, SMS recipients missed less often (27.6% vs 32.7%).
               </p>
               <p className={`text-xs mt-3 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-                Source: Google Colab EDA notebook —{' '}
+                Test statistics are from the notebook (110,521 appointments; this dashboard's file also leaves out 5 records with Age 115). Source: Google Colab notebook —{' '}
                 <a
                   href={COLAB_URL}
                   target="_blank"

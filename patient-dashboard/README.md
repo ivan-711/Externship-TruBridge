@@ -11,7 +11,10 @@ React dashboard for exploring patient no-show patterns by:
 - Week-to-week trend
 
 ## Data
-The dashboard uses the cleaned dataset produced in the Colab notebook.
+The dashboard loads `public/publicsafefinalnoshowdataset.csv` (110,516 rows). It is the notebook's
+public-safe export (`docs/notebook/TruBridge_NoShow_Analysis_FINAL.ipynb`, with the patient and
+appointment ID columns removed) minus 5 records with Age 115, plus label columns for the charts.
+Waiting days are calendar days from booking to appointment (same-day = 0).
 
 ## Run locally
 ```bash
