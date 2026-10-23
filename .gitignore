@@ -20,3 +20,7 @@ pnpm-debug.log*
 # OS / editor
 .DS_Store
 .vscode/
+
+# notebook re-run: raw Kaggle file and generated outputs
+docs/notebook/*.csv
+docs/notebook/story_charts/
